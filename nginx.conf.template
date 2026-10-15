@@ -1,0 +1,260 @@
+worker_processes auto;
+worker_rlimit_nofile 65535;
+pid /run/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 8192;
+    use epoll;
+    multi_accept on;
+}
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    tcp_nopush      on;
+    tcp_nodelay     on;
+    server_tokens   off;
+    access_log      off;
+    # A timed-out or reset client socket is released with an RST instead of
+    # lingering through the FIN close sequence, so wedged tunnels are shed
+    # immediately instead of occupying worker cycles while they drain.
+    reset_timedout_connection on;
+    keepalive_timeout      65;
+    # Client-facing limit on how many requests one kept-alive connection may
+    # carry before nginx closes it. The default is 1000, which a browser
+    # never reaches but an XHTTP packet-up tunnel burns through in seconds,
+    # because every upload chunk is its own HTTP request. Hitting it forces
+    # the client into a fresh TCP+TLS handshake — roughly three round trips,
+    # so about 400ms of dead air on a 130ms path, over and over.
+    #
+    # This is a ceiling, not a preallocation: raising it costs nothing when
+    # connections are short-lived.
+    keepalive_requests     100000;
+    client_max_body_size   16m;
+    client_body_timeout    30s;
+    types_hash_max_size    2048;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 512;
+    gzip_types text/plain text/css application/json application/javascript
+               text/yaml application/yaml image/svg+xml;
+
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    # Real client IP behind the Railway edge
+    map $http_cf_connecting_ip $real_client_ip {
+        default   $http_cf_connecting_ip;
+        ''        $remote_addr;
+    }
+
+    set_real_ip_from 0.0.0.0/0;
+    set_real_ip_from ::/0;
+    real_ip_header   X-Forwarded-For;
+    real_ip_recursive on;
+
+    # Rate limits: protect the login endpoint and the panel in general
+    limit_req_zone $real_client_ip zone=login:10m  rate=10r/m;
+    limit_req_zone $real_client_ip zone=api:10m    rate=30r/s;
+    limit_conn_zone $real_client_ip zone=perip:10m;
+
+    upstream control_plane {
+        server 127.0.0.1:8888;
+        keepalive 32;
+        keepalive_timeout 60s;
+    }
+
+    # XHTTP packet-up sends every upload chunk as a separate HTTP request, so
+    # this upstream sees a few hundred requests per second per active tunnel.
+    # Without a keepalive pool nginx opens a brand new TCP connection to Xray
+    # for each one, then leaves it in TIME_WAIT. That is pure overhead on the
+    # hot path: a connect() and a teardown for every game packet batch.
+    #
+    # Reusing connections removes that entirely. The WebSocket-style inbounds
+    # do not need this because each of their tunnels is one long-lived
+    # connection already.
+    upstream xray_xhttp {
+        server 127.0.0.1:7004;
+        keepalive 64;
+        keepalive_timeout 300s;
+        # nginx closes a kept-alive upstream connection after this many
+        # requests. The default (1000) is reached in seconds at XHTTP's
+        # request rate, and each recycle costs a fresh connect.
+        keepalive_requests 100000;
+    }
+
+    server {
+        # reuseport: each worker gets its own accept queue on the same port,
+        # so an XHTTP burst (hundreds of small POSTs per tunnel) never queues
+        # behind a single listen mutex.
+        listen __PORT__ default_server reuseport;
+        listen [::]:__PORT__ default_server reuseport;
+        server_name _;
+        root /usr/share/nginx/web;
+
+        # ── Tunnel endpoints (prefix is secret, see app/paths.py) ─────────
+        location __PREFIX__/vless {
+            proxy_pass         http://127.0.0.1:7001;
+            include            /etc/nginx/snippets/ws.conf;
+        }
+        location __PREFIX__/vmess {
+            proxy_pass         http://127.0.0.1:7002;
+            include            /etc/nginx/snippets/ws.conf;
+        }
+        location __PREFIX__/trojan {
+            proxy_pass         http://127.0.0.1:7003;
+            include            /etc/nginx/snippets/ws.conf;
+        }
+        location __PREFIX__/upgrade {
+            proxy_pass         http://127.0.0.1:7005;
+            include            /etc/nginx/snippets/ws.conf;
+        }
+
+        # ── Country-exit locations (see app/locations.py) ─────────────────
+__LOCATIONS__
+
+        # ── XHTTP (packet-up): plain HTTP, NOT a websocket upgrade ────────
+        # Uploads arrive as a series of POSTs, downloads are one long
+        # streamed GET. Both buffering switches must be off or the stream
+        # stalls; the long timeouts keep idle game sessions alive.
+        #
+        # CRITICAL: Do NOT include ws.conf here — XHTTP is HTTP, not WS.
+        # Adding Upgrade/Connection headers breaks the connection.
+        location __PREFIX__/xhttp {
+            proxy_pass              http://xray_xhttp;
+            proxy_http_version      1.1;
+            proxy_set_header        Host              $http_host;
+            proxy_set_header        X-Real-IP         $real_client_ip;
+            proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header        X-Forwarded-Proto $scheme;
+            proxy_set_header        Connection        "";
+            # Nagle off: XHTTP sends many small POSTs and each one must leave
+            # immediately rather than being coalesced.
+            tcp_nodelay             on;
+            proxy_buffering         off;
+            proxy_request_buffering off;
+            proxy_cache             off;
+            proxy_read_timeout      86400s;
+            proxy_send_timeout      86400s;
+            proxy_connect_timeout   5s;
+            proxy_socket_keepalive  on;
+            client_max_body_size    0;
+            client_body_timeout     86400s;
+            chunked_transfer_encoding on;
+        }
+
+        # ── Latency probe (tiny, unauthenticated, no logging) ─────────────
+        location = /__ping {
+            add_header Content-Type text/plain always;
+            add_header Cache-Control "no-store" always;
+            add_header Access-Control-Allow-Origin "*" always;
+            return 200 "pong";
+        }
+
+        # ── WebSocket echo for tunnel RTT measurement ─────────────────────
+        location = /__ws {
+            proxy_pass              http://control_plane;
+            include                 /etc/nginx/snippets/ws.conf;
+        }
+
+        location = /health {
+            add_header Content-Type text/plain always;
+            return 200 "ok\n";
+        }
+
+        # ── Control plane API ─────────────────────────────────────────────
+        location = /api/login {
+            limit_req zone=login burst=5 nodelay;
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+
+        location = /api/stream {
+            proxy_pass              http://control_plane;
+            proxy_http_version      1.1;
+            proxy_set_header        Host              $http_host;
+            proxy_set_header        X-Real-IP         $remote_addr;
+            proxy_set_header        Connection        "";
+            proxy_buffering         off;
+            proxy_cache             off;
+            proxy_read_timeout      86400s;
+            gzip                    off;
+        }
+
+        location /api/ {
+            limit_req  zone=api burst=60 nodelay;
+            limit_conn perip 64;
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+
+        location /sub/ {
+            limit_req  zone=api burst=20 nodelay;
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+
+        # ── User portal: /u/<token>/  -> static SPA, sub-paths -> API
+        location ~ ^/u/[A-Za-z0-9_-]+/(api|boost|weekly|history)$ {
+            limit_req  zone=api burst=20 nodelay;
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+        location ~ ^/u/[A-Za-z0-9_-]+/?$ {
+            root /usr/share/nginx/web;
+            try_files /u/index.html =404;
+        }
+
+        # ── Trial links: /t/<code>/ -> static page, /t/<code>/api|claim ──
+        location ~ ^/t/[A-Za-z0-9_-]+/(api|claim)$ {
+            limit_req  zone=api burst=10 nodelay;
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+        location ~ ^/t/[A-Za-z0-9_-]+/?$ {
+            root /usr/share/nginx/web;
+            try_files /t/index.html =404;
+        }
+
+        # ── Admin panel ───────────────────────────────────────────────────
+        location /panel/ {
+            root /usr/share/nginx/web;
+            index index.html;
+            try_files $uri $uri/ /panel/index.html;
+            add_header Cache-Control "no-cache, must-revalidate" always;
+            add_header X-Frame-Options SAMEORIGIN always;
+            add_header X-Content-Type-Options nosniff always;
+            add_header Referrer-Policy no-referrer always;
+        }
+
+        location /assets/ {
+            root /usr/share/nginx/web;
+            add_header Cache-Control "public, max-age=0, must-revalidate" always;
+            etag on;
+        }
+
+        location = /manifest.webmanifest {
+            root /usr/share/nginx/web;
+            add_header Content-Type application/manifest+json;
+        }
+        location = /sw.js {
+            root /usr/share/nginx/web;
+            add_header Content-Type application/javascript;
+            add_header Cache-Control "no-cache";
+        }
+
+        # ── Everything else: the decoy site (dynamic, via control plane) ─
+        # Proxied so every request gets a random template — two consecutive
+        # fetches are not byte-identical, which defeats hash fingerprinting
+        # by scanners that flag a static decoy.
+        location / {
+            proxy_pass http://control_plane;
+            include    /etc/nginx/snippets/api.conf;
+        }
+    }
+}

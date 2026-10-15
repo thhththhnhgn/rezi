@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070f">
+<meta name="robots" content="noindex,nofollow">
+<title>Ultra Gaming — Free Trial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/app.css?v=3.7.0">
+<style>
+.tw{max-width:520px;margin:0 auto;padding:34px 16px 44px;display:flex;flex-direction:column;gap:14px}
+.hero{text-align:center;padding:14px 0 4px}
+.hero .em{font-size:52px;filter:drop-shadow(0 0 18px var(--neon));animation:pulse 3s ease-in-out infinite;display:block;margin-bottom:10px}
+.hero h1{font-size:21px;font-weight:900;letter-spacing:3px;color:var(--neon);text-shadow:var(--glow)}
+.hero p{font-size:12.5px;color:var(--muted);letter-spacing:1.5px;margin-top:6px}
+</style>
+</head>
+<body>
+<canvas id="particles"></canvas>
+<div class="tw" id="root"><div class="empty"><span class="sp"></span></div></div>
+<div id="toasts"></div>
+<script src="/assets/qr.js?v=3.7.0"></script>
+<script src="/assets/core.js?v=3.7.0"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  var t = UG.t, esc = UG.esc;
+
+  var m = location.pathname.match(/^\/t\/([A-Za-z0-9_-]+)\/?$/);
+  var CODE = m ? m[1] : "";
+
+  UG.particles($("#particles"));
+
+  function hero() {
+    return '<div class="hero"><span class="em">🎁</span>' +
+      '<h1>FREE TRIAL</h1><p>ULTRA GAMING VPN</p></div>';
+  }
+
+  function fail(msg, icon) {
+    $("#root").innerHTML = hero() +
+      '<div class="card"><div class="empty">' +
+      '<span class="em">' + (icon || "🔒") + '</span>' + esc(msg) + '</div></div>';
+  }
+
+  function load() {
+    if (!CODE) return fail("Invalid link");
+    fetch("/t/" + encodeURIComponent(CODE) + "/api")
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status === 404
+          ? "This trial link does not exist" : "Server error");
+        return r.json();
+      })
+      .then(render)
+      .catch(function (e) { fail(e.message); });
+  }
+
+  function render(d) {
+    if (!d.enabled) return fail("This trial link is paused", "⏸");
+    if (d.already_claimed)
+      return fail("You already claimed a trial recently. Try again tomorrow.", "⏳");
+    if (d.remaining_total <= 0)
+      return fail("All trial slots have been used", "😔");
+    if (d.remaining_today <= 0)
+      return fail("Today's trials are gone. Come back tomorrow!", "🌙");
+
+    $("#root").innerHTML = hero() +
+      '<div class="card">' +
+        '<div class="row2">' +
+          '<div style="text-align:center"><div class="lbl">Data</div>' +
+          '<div class="val" style="font-size:27px;color:var(--neon)">' +
+          d.quota_gb + '<span class="u">GB</span></div></div>' +
+          '<div style="text-align:center"><div class="lbl">Valid for</div>' +
+          '<div class="val" style="font-size:27px;color:var(--neon2)">' +
+          d.hours + '<span class="u">hours</span></div></div>' +
+        '</div>' +
+        '<p style="font-size:12.5px;color:var(--muted);margin:16px 0;text-align:center">' +
+        'Six protocols, gaming-tuned routing, works on every major client. ' +
+        'No sign-up, no email — just tap the button.</p>' +
+        '<button class="btn block" id="claim" style="padding:13px">🚀 GET MY ACCOUNT</button>' +
+        '<div style="text-align:center;margin-top:12px;font-size:11px;color:var(--muted)">' +
+        d.remaining_today + ' left today · ' + d.remaining_total + ' total' +
+        '</div>' +
+      '</div>';
+
+    $("#claim").addEventListener("click", claim);
+  }
+
+  function claim() {
+    var b = $("#claim");
+    b.disabled = true; b.innerHTML = '<span class="sp"></span>';
+    fetch("/t/" + encodeURIComponent(CODE) + "/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+    }).then(function (res) {
+      if (!res.ok) throw new Error(res.j.error || "Could not create account");
+      success(res.j);
+    }).catch(function (e) {
+      UG.toast("❌ " + esc(e.message), "err", 5000);
+      b.disabled = false; b.textContent = "🚀 GET MY ACCOUNT";
+    });
+  }
+
+  function success(a) {
+    var svg = QR.svg(a.sub, { size: 210 });
+    $("#root").innerHTML = hero() +
+      '<div class="card" style="border-color:rgba(46,213,115,.4)">' +
+        '<div style="text-align:center;margin-bottom:16px">' +
+        '<div style="font-size:40px">✅</div>' +
+        '<div style="font-size:16px;font-weight:800;color:var(--green);margin-top:6px">' +
+        'ACCOUNT READY</div>' +
+        '<div class="mono" style="font-size:13px;color:var(--muted);margin-top:4px">' +
+        esc(a.username) + '</div></div>' +
+
+        '<div class="kv"><b>Data</b><span>' + a.quota_gb + ' GB</span></div>' +
+        '<div class="kv"><b>Expires</b><span>' + UG.when(a.expires_at) + '</span></div>' +
+
+        '<div style="text-align:center;margin:18px 0">' +
+        (svg ? '<div class="qr">' + svg + '</div>' : '') +
+        '<div style="font-size:11px;color:var(--muted);margin-top:8px">' +
+        'Scan with your VPN client</div></div>' +
+
+        '<button class="btn block" id="cpSub">📋 Copy subscription link</button>' +
+        '<button class="btn block dim" id="goPortal" style="margin-top:9px">' +
+        '👤 Open my account page</button>' +
+
+        '<div style="background:rgba(255,165,2,.08);border:1px solid rgba(255,165,2,.25);' +
+        'border-radius:10px;padding:11px;margin-top:16px;font-size:11.5px;color:var(--amber)">' +
+        '⚠️ Save your account page link now — it is the only way back to your configs.' +
+        '</div>' +
+      '</div>';
+
+    $("#cpSub").addEventListener("click", function () { UG.copy(a.sub, this); });
+    $("#goPortal").addEventListener("click", function () {
+      location.href = a.portal;
+    });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Ultra Gaming VPN Panel — Environment Variables
+# Auto-generated on 2026-10-15 09:02:19
+# Manual overrides can be added/edited as needed
+
+ADMIN_USER="admin"
+ADMIN_PASS="user896ef6b0"
+SECRET_KEY="b54872704f46537d2eb92f32fb63e1e039e608e42b511e4317bea28c7383049d"
+PATH_SECRET="32cc91c2de466369160e28b683b566a0"
+DB_PATH="/data/ultra.db"
+ALT_HOSTS="panelgaming-production.up.railway.app"
+LOCATIONS="all"
+
+# Optional: Uncomment and modify as needed
+# TUNNEL_DISABLE=0
+# PORT=8080
+# SESSION_TTL=86400
+# XRAY_LOGLEVEL=warning
+# REALITY_DISABLE=0

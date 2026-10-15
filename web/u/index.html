@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070f">
+<meta name="robots" content="noindex,nofollow">
+<title>Ultra Gaming — My Account</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/app.css?v=3.7.0">
+<style>
+.wrapu{max-width:760px;margin:0 auto;padding:18px 14px 44px;display:flex;flex-direction:column;gap:13px}
+</style>
+</head>
+<body>
+<canvas id="particles"></canvas>
+<div class="wrapu" id="root">
+  <div class="empty"><span class="sp"></span></div>
+</div>
+<div id="toasts"></div>
+<script src="/assets/qr.js?v=3.7.0"></script>
+<script src="/assets/core.js?v=3.7.0"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var t = UG.t, esc = UG.esc;
+
+  var m = location.pathname.match(/^\/u\/([A-Za-z0-9_-]+)\/?$/);
+  var TOKEN = m ? m[1] : "";
+  var D = null, PROFILE = "balanced";
+
+  UG.particles($("#particles"));
+
+  function load() {
+    fetch("/u/" + encodeURIComponent(TOKEN) + "/api?profile=" + encodeURIComponent(PROFILE) +
+          "&lang=" + (UG.lang() === "fa" ? "fa" : "en"))
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status === 404 ? "Subscription not found" : "Server error");
+        return r.json();
+      })
+      .then(function (d) { D = d; render(); })
+      .catch(function (e) {
+        $("#root").innerHTML = '<div class="card"><div class="empty">' +
+          '<span class="em">🔒</span>' + esc(e.message) + '</div></div>';
+      });
+  }
+
+  function render() {
+    var d = D, r = d.rank || {}, ach = d.achievements || { unlocked: [], locked: [] };
+    var qpct = d.quota_pct;
+    var origin = location.origin;
+
+    $("#root").innerHTML =
+      '<div class="topbar">' +
+        '<span style="font-size:22px;filter:drop-shadow(0 0 8px var(--neon))">⚡</span>' +
+        '<div><h2>' + esc(d.username) + '</h2>' +
+        '<div class="sub">' + (d.enabled ? t("enabled") : t("disabled")) + '</div></div>' +
+        '<div class="grow"></div>' +
+        '<button class="tab" id="lg">🌐</button>' +
+        '<span class="pill' + (d.enabled ? "" : " off") + '"><span class="dot"></span>' +
+        (d.enabled ? t("online") : t("disabled")) + '</span>' +
+      '</div>' +
+
+      '<div class="card"><div class="rankbig">' +
+        '<span class="em" style="color:' + esc(r.color) + '">' + esc(r.icon) + '</span>' +
+        '<div class="t" style="flex:1"><b style="color:' + esc(r.color) + '">' + esc(r.name) + '</b>' +
+        '<span>' + UG.num(r.xp) + ' XP' + (r.next ? ' → ' + esc(r.next) : ' — MAX RANK') + '</span>' +
+        '<div class="track" style="margin-top:7px"><div class="fill f-xp" style="width:' + (r.progress || 0) + '%"></div></div>' +
+        '</div></div></div>' +
+
+      boostBar(d) +
+
+      '<div class="row3">' +
+        '<div class="card"><div class="lbl">' + t("used") + '</div>' +
+        '<div class="val" style="font-size:23px">' + UG.bytes(d.used_total) + '</div>' +
+        '<div class="sub">↓ ' + UG.bytes(d.used_down) + ' · ↑ ' + UG.bytes(d.used_up) + '</div></div>' +
+
+        '<div class="card"><div class="lbl">' + t("quota") + '</div>' +
+        '<div class="val" style="font-size:23px">' + (d.quota_bytes ? UG.bytes(d.quota_bytes) : "∞") + '</div>' +
+        (qpct != null ? '<div class="track"><div class="fill f-q" style="width:' + Math.min(100, qpct) + '%"></div></div>' +
+          '<div class="sub">' + qpct + '% ' + t("used").toLowerCase() + '</div>'
+          : '<div class="sub">' + t("unlimited") + '</div>') + '</div>' +
+
+        '<div class="card"><div class="lbl">' + t("expires") + '</div>' +
+        '<div class="val" style="font-size:23px">' + (d.days_left != null ? d.days_left : "∞") +
+        '<span class="u">' + (d.days_left != null ? t("days") : "") + '</span></div>' +
+        '<div class="sub">' + (d.expires_at ? UG.when(d.expires_at) : t("never")) + '</div></div>' +
+      '</div>' +
+
+      '<div class="card"><div class="title">🎮 ' + t("profile") + '</div>' +
+        '<select id="pf">' + (d.profiles || []).map(function (p) {
+          return '<option value="' + p.id + '"' + (p.id === PROFILE ? " selected" : "") + '>' +
+            p.icon + " " + esc(p.label) + '</option>';
+        }).join("") + '</select>' +
+        '<div class="sub" id="pfd" style="margin-top:8px"></div></div>' +
+
+      '<div class="card"><div class="title">🔗 ' + t("configs") + '</div>' +
+        (d.configs || []).map(function (c, i) {
+          return '<div class="cfg' + (c.featured ? " star" : "") + '">' +
+            '<span class="badge ' + c.badge + '">' + esc(c.kind.toUpperCase()) + '</span>' +
+            '<div class="info"><div class="nm">' + esc(c.label) + '</div>' +
+            '<div class="pt">' + (c.note ? esc(c.note) : esc(c.path)) + '</div></div>' +
+            '<button class="btn sm" data-cp="' + i + '">' + t("copy") + '</button>' +
+            '<button class="btn sm dim" data-qr="' + i + '">' + t("qr") + '</button></div>';
+        }).join("") +
+        '<div id="qr" style="text-align:center;margin-top:14px"></div></div>' +
+
+      '<div class="card"><div class="title">📡 ' + t("subscription") + '</div>' +
+        sub("v2rayN / v2rayNG", origin + "/sub/" + TOKEN) +
+        sub("Clash Meta", origin + "/sub/" + TOKEN + "?format=clash") +
+        sub("sing-box", origin + "/sub/" + TOKEN + "?format=singbox") +
+        '<p style="font-size:11.5px;color:var(--muted);margin-top:10px">' +
+        'Paste a subscription URL into your client and it will keep every config up to date automatically.</p></div>' +
+
+      '<div class="card"><div class="title">🏆 ' + t("achievements") +
+        ' <span style="color:var(--yellow)">' + ach.count + '/' + ach.total + '</span></div>' +
+        '<div class="achs">' +
+        ach.unlocked.map(function (a) { return achC(a, true); }).join("") +
+        ach.locked.map(function (a) { return achC(a, false); }).join("") +
+        '</div></div>' +
+
+      '<div class="card"><div class="title">📈 ' + t("myactivity") +
+        '<div class="grow"></div>' +
+        ['24h','7d','30d'].map(function(w,i){
+          return '<button class="tab' + (i===0?' on':'') + '" data-uw="' + w + '">' + w + '</button>';
+        }).join("") + '</div>' +
+        '<canvas class="graph" id="uG" style="height:140px"></canvas>' +
+        '<div style="display:flex;gap:16px;margin-top:9px;font-size:11px;color:var(--muted)">' +
+        '<span style="color:#00ffc8">— ' + t("download") + '</span>' +
+        '<span style="color:#8b5cf6">— ' + t("upload") + '</span></div>' +
+        '<div id="uSum"></div>' +
+        '<button class="btn block violet" id="wkBtn" style="margin-top:12px">📊 ' +
+        t("weekly") + '</button></div>' +
+
+      '<div class="card"><div class="title">🎮 ' + t("gameping") +
+        '<div class="grow"></div>' +
+        '<button class="btn sm" id="pingGames">' + t("testping") + '</button></div>' +
+        '<p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' +
+        'Round-trip time from your device to each game publisher.</p>' +
+        '<div class="gamegrid">' + (d.games || []).map(function (g) {
+          return '<div class="gcard"><div class="hd">' +
+            '<span class="em">' + esc(g.icon) + '</span><b>' + esc(g.name) + '</b>' +
+            '<button class="btn sm dim" data-pg="' + esc(g.id) + '">▶</button></div>' +
+            g.regions.map(function (r, i) {
+              return '<div class="rg"><span class="fl">' + esc(r.flag) + '</span>' +
+                '<span class="nm">' + esc(r.label) + '</span>' +
+                '<span class="pingdot" id="pd-' + esc(g.id) + '-' + i + '" ' +
+                'style="background:rgba(255,255,255,.12)"></span>' +
+                '<span class="ms" id="pm-' + esc(g.id) + '-' + i + '" ' +
+                'style="color:var(--muted)">—</span></div>';
+            }).join("") + '</div>';
+        }).join("") + '</div></div>' +
+
+      '<div class="card"><div class="title">🎨 ' + t("theme") + '</div>' +
+        '<div class="themes">' + UG.THEMES.map(function (th) {
+          return '<button class="thm' + (UG.theme() === th.id ? ' on' : '') +
+            '" data-th="' + th.id + '">' +
+            '<span class="sw"><i style="background:' + th.c1 + '"></i>' +
+            '<i style="background:' + th.c2 + '"></i></span>' +
+            '<b>' + esc(th.label) + '</b></button>';
+        }).join("") + '</div></div>' +
+
+      '<div class="card"><div class="title">🏁 Route check</div>' +
+        '<button class="btn block" id="ping">Measure latency</button>' +
+        '<div id="pingR" style="margin-top:12px"></div></div>';
+
+    bind();
+  }
+
+  function sub(n, u) {
+    return '<div class="cfg"><div class="info"><div class="nm">' + esc(n) + '</div>' +
+      '<div class="pt" style="word-break:break-all">' + esc(u) + '</div></div>' +
+      '<button class="btn sm" data-s="' + esc(u) + '">' + t("copy") + '</button>' +
+      '<button class="btn sm dim" data-sq="' + esc(u) + '">' + t("qr") + '</button></div>';
+  }
+  function achC(a, got) {
+    return '<div class="ach' + (got ? " got" : "") + '"><span class="em">' + esc(a.icon) + '</span>' +
+      '<div class="t"><b>' + esc(a.title) + '</b><span>' + esc(a.desc) + '</span></div></div>';
+  }
+
+
+  function boostBar(d) {
+    var b = d.boost || { active: false };
+    if (b.active) {
+      return '<div class="boostbar"><span class="fire">🔥</span>' +
+        '<div class="info"><b>' + t("boostactive") + '</b>' +
+        '<span>' + t("boostdesc") + '</span></div>' +
+        '<span class="cd" id="bcd">' + UG.mmss(b.remaining) + '</span></div>';
+    }
+    return '<div class="boostbar" style="opacity:.8">' +
+      '<span style="font-size:22px">⚡</span>' +
+      '<div class="info"><b style="color:var(--muted)">' + t("boost") + '</b>' +
+      '<span>' + t("boostdesc") + '</span></div>' +
+      '<button class="btn" id="bOn">' + t("boostoff") + '</button></div>';
+  }
+
+  var bTimer = null;
+  function wireBoost(d) {
+    if (bTimer) { clearInterval(bTimer); bTimer = null; }
+    var on = $("#bOn");
+    if (on) on.addEventListener("click", function () {
+      on.disabled = true; on.innerHTML = '<span class="sp"></span>';
+      fetch("/u/" + encodeURIComponent(TOKEN) + "/boost", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+      }).then(function (res) {
+        if (!res.ok) throw new Error(res.j.error || "failed");
+        UG.toast("🔥 Boost on for 30 minutes", "xp");
+        load();
+      }).catch(function (e) {
+        UG.toast("❌ " + esc(e.message), "err");
+        on.disabled = false; on.textContent = t("boostoff");
+      });
+    });
+
+    var b = d.boost || {};
+    if (b.active) {
+      var left = b.remaining;
+      bTimer = setInterval(function () {
+        left--;
+        var el = $("#bcd");
+        if (!el) { clearInterval(bTimer); bTimer = null; return; }
+        if (left <= 0) { clearInterval(bTimer); bTimer = null; load(); return; }
+        el.textContent = UG.mmss(left);
+      }, 1000);
+    }
+  }
+
+  function loadChart(win) {
+    fetch("/u/" + encodeURIComponent(TOKEN) + "/history?window=" + win)
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        var cv = $("#uG"); if (!cv) return;
+        var s = r.series || [];
+        if (!s.length) {
+          UG.sparkline(cv, [{ data: [0, 0], color: "#2a2a35" }]);
+          var e0 = $("#uSum");
+          if (e0) e0.innerHTML = '<div class="empty">' + t("noData") + '</div>';
+          return;
+        }
+        UG.sparkline(cv, [
+          { data: s.map(function (x) { return x.down; }), color: "#00ffc8" },
+          { data: s.map(function (x) { return x.up; }), color: "#8b5cf6" }
+        ]);
+        var dn = s.reduce(function (a, b2) { return a + b2.down; }, 0);
+        var up = s.reduce(function (a, b2) { return a + b2.up; }, 0);
+        var e = $("#uSum");
+        if (e) e.innerHTML =
+          '<div class="kv"><b>↓ ' + t("download") + '</b><span style="color:var(--neon)">' +
+          UG.bytes(dn) + '</span></div>' +
+          '<div class="kv"><b>↑ ' + t("upload") + '</b><span style="color:var(--neon2)">' +
+          UG.bytes(up) + '</span></div>';
+      }).catch(function () { });
+  }
+
+  function weekly() {
+    fetch("/u/" + encodeURIComponent(TOKEN) + "/weekly")
+      .then(function (r) { return r.json(); })
+      .then(function (w) {
+        var tr = w.traffic || {};
+        var days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        var byDow = {};
+        (tr.daily || []).forEach(function (x) { byDow[x.dow] = x.bytes; });
+        var max = Math.max.apply(null, days.map(function (_, i) {
+          return byDow[i] || 0;
+        }).concat([1]));
+        var chg = tr.change_pct;
+        var chgTxt = chg == null ? "—"
+          : (chg > 0 ? "▲ +" : chg < 0 ? "▼ " : "= ") + Math.abs(chg) + "%";
+
+        var html = '<div class="mask" id="mask"><div class="modal">' +
+          '<div class="wrap-report"><h2>' + esc(w.username) + '</h2>' +
+          '<div class="sub">WEEK IN REVIEW</div>' +
+          '<div class="bigstat">' +
+          '<div><b style="color:var(--neon)">' + UG.bytes(tr.total || 0) + '</b><span>Total</span></div>' +
+          '<div><b style="color:var(--neon2)">' + UG.bytes(tr.avg_per_day || 0) + '</b><span>Per day</span></div>' +
+          '<div><b>' + chgTxt + '</b><span>vs last week</span></div>' +
+          '<div><b style="color:' + esc(w.rank.color) + '">' + esc(w.rank.icon) +
+          '</b><span>' + esc(w.rank.name) + '</span></div></div>' +
+          '<div class="daybars">' + days.map(function (_, i) {
+            var v = byDow[i] || 0;
+            return '<div class="d" title="' + days[i] + ': ' + UG.bytes(v) +
+              '"><i style="height:' + Math.max(3, v / max * 100) + '%"></i></div>';
+          }).join("") + '</div>' +
+          '<div class="daybars lbls">' + days.map(function (x) {
+            return '<span>' + x + '</span>';
+          }).join("") + '</div>' +
+          '<div style="margin-top:16px">' + (w.highlights || []).map(function (x) {
+            return '<div class="hilite"><span class="b">▸</span><span>' + esc(x) + '</span></div>';
+          }).join("") + '</div>' +
+          (w.projection ? '<div class="kv" style="margin-top:12px">' +
+            '<b>Quota lasts</b><span>' + w.projection.days_left + ' days</span></div>' : '') +
+          '</div><div class="acts">' +
+          '<button class="btn dim" id="wkClose">Close</button></div></div></div>';
+
+        var wrap = document.createElement("div");
+        wrap.innerHTML = html;
+        document.body.appendChild(wrap.firstChild);
+        $("#wkClose").addEventListener("click", function () { $("#mask").remove(); });
+        $("#mask").addEventListener("click", function (ev) {
+          if (ev.target.id === "mask") $("#mask").remove();
+        });
+      }).catch(function (e) { UG.toast("❌ " + esc(e.message), "err"); });
+  }
+
+  function pingGame(gid, games) {
+    var g = (games || []).filter(function (x) { return x.id === gid; })[0];
+    if (!g) return Promise.resolve();
+    return Promise.all(g.regions.map(function (r, i) {
+      var dot = $("#pd-" + gid + "-" + i), lbl = $("#pm-" + gid + "-" + i);
+      if (lbl) { lbl.textContent = "..."; lbl.style.color = "var(--muted)"; }
+      return UG.probe(r.url, 5).then(function (res) {
+        if (!lbl || !dot) return;
+        if (res.median == null) {
+          lbl.textContent = "n/a"; lbl.style.color = "var(--red)";
+          dot.style.background = "var(--red)";
+        } else {
+          var c = UG.pingColor(res.median);
+          lbl.textContent = res.median + "ms";
+          lbl.style.color = c; dot.style.background = c;
+          dot.title = "jitter " + res.jitter + "ms · loss " + res.loss + "%";
+        }
+      });
+    }));
+  }
+
+  function bind() {
+    var d = D;
+    $("#lg").addEventListener("click", function () {
+      UG.setLang(UG.lang() === "fa" ? "en" : "fa"); render();
+    });
+    var pf = $("#pf");
+    function pfd() {
+      var p = (d.profiles || []).filter(function (x) { return x.id === pf.value; })[0];
+      $("#pfd").textContent = p ? p.desc : "";
+    }
+    pfd();
+    pf.addEventListener("change", function () { PROFILE = pf.value; load(); });
+
+    $$("[data-cp]").forEach(function (b) {
+      b.addEventListener("click", function () { UG.copy(d.configs[+b.dataset.cp].uri, b); });
+    });
+    $$("[data-qr]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var c = d.configs[+b.dataset.qr];
+        var svg = QR.svg(c.uri, { size: 230 });
+        $("#qr").innerHTML = svg
+          ? '<div class="qr">' + svg + '</div><div style="font-size:11px;color:var(--muted);margin-top:7px">' +
+            esc(c.label) + '</div>'
+          : '<div style="color:var(--red);font-size:12px">Too long for QR — use Copy.</div>';
+      });
+    });
+    $$("[data-s]").forEach(function (b) {
+      b.addEventListener("click", function () { UG.copy(b.dataset.s, b); });
+    });
+    $$("[data-sq]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        $("#qr").innerHTML = '<div class="qr">' + QR.svg(b.dataset.sq, { size: 230 }) + '</div>';
+        $("#qr").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    });
+
+    wireBoost(d);
+    loadChart("24h");
+    $$("[data-uw]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        $$("[data-uw]").forEach(function (x) { x.classList.remove("on"); });
+        b.classList.add("on");
+        loadChart(b.dataset.uw);
+      });
+    });
+    var wk = $("#wkBtn");
+    if (wk) wk.addEventListener("click", weekly);
+
+    $$("[data-pg]").forEach(function (b) {
+      b.addEventListener("click", function () { pingGame(b.dataset.pg, d.games); });
+    });
+    var pgAll = $("#pingGames");
+    if (pgAll) pgAll.addEventListener("click", function () {
+      pgAll.disabled = true; pgAll.innerHTML = '<span class="sp"></span>';
+      var chain = Promise.resolve();
+      (d.games || []).forEach(function (g) {
+        chain = chain.then(function () { return pingGame(g.id, d.games); });
+      });
+      chain.then(function () {
+        pgAll.disabled = false; pgAll.textContent = t("testping");
+      });
+    });
+
+    $$("[data-th]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        UG.setTheme(b.dataset.th); render();
+      });
+    });
+
+    $("#ping").addEventListener("click", function () {
+      var btn = this; btn.disabled = true; btn.innerHTML = '<span class="sp"></span>';
+      var n = 8, s = [], fails = 0, i = 0;
+      (function next() {
+        if (i++ >= n) return done();
+        var t0 = performance.now();
+        fetch("/__ping?_=" + Date.now() + "-" + i, { cache: "no-store" })
+          .then(function (r) { return r.text(); })
+          .then(function () { s.push(performance.now() - t0); setTimeout(next, 70); })
+          .catch(function () { fails++; setTimeout(next, 70); });
+      })();
+      function done() {
+        btn.disabled = false; btn.textContent = "Measure latency";
+        if (!s.length) { $("#pingR").innerHTML = '<div class="kv"><b>Result</b><span style="color:var(--red)">unreachable</span></div>'; return; }
+        s.sort(function (a, b2) { return a - b2; });
+        var med = s[Math.floor(s.length / 2)];
+        var avg = s.reduce(function (a, b2) { return a + b2; }, 0) / s.length;
+        var jit = Math.sqrt(s.reduce(function (a, b2) { return a + Math.pow(b2 - avg, 2); }, 0) / s.length);
+        var col = med < 80 ? "var(--green)" : med < 160 ? "var(--amber)" : "var(--red)";
+        var verdict = med < 80 ? "Excellent for competitive play"
+          : med < 160 ? "Fine for most games" : "High — expect delay";
+        $("#pingR").innerHTML =
+          '<div class="kv"><b>Median RTT</b><span style="color:' + col + '">' + Math.round(med) + ' ms</span></div>' +
+          '<div class="kv"><b>Jitter</b><span>' + Math.round(jit) + ' ms</span></div>' +
+          '<div class="kv"><b>Best / Worst</b><span>' + Math.round(s[0]) + ' / ' + Math.round(s[s.length - 1]) + ' ms</span></div>' +
+          '<div class="kv"><b>Loss</b><span>' + Math.round(fails / n * 100) + '%</span></div>' +
+          '<div class="sub" style="margin-top:8px;color:' + col + '">' + verdict + '</div>';
+      }
+    });
+  }
+
+  if (!TOKEN) {
+    $("#root").innerHTML = '<div class="card"><div class="empty"><span class="em">🔒</span>Invalid link</div></div>';
+  } else load();
+})();
+</script>
+</body>
+</html>

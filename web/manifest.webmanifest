@@ -1,0 +1,20 @@
+{
+  "name": "Ultra Gaming VPN",
+  "short_name": "Ultra",
+  "description": "Gaming-tuned tunnel control center",
+  "start_url": "/panel/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080c19",
+  "theme_color": "#5b6cff",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
